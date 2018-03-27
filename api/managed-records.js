@@ -6,19 +6,21 @@ window.path = "http://localhost:3000/records";
 
 // Your retrieve function plus any additional functions go here ...
 
-const primaryColors = ['red', 'blue', 'yellow'];
-const pageSize = 10;
-const isDebug = false;
+const PRIMARY_COLORS = ['red', 'blue', 'yellow'];
+const PAGE_SIZE = 10;
+const IS_DEBUG = false;
+const OPEN_VALUE = 'open';  // avoiding magic strings in the code...
+const CLOSED_VALUE = 'closed';
 
 /**
  * Determine if the given color is a primary color
  * @param color
- * @returns boolean - true if the given color is a primary color
+ * @returns boolean true if the given color is a primary color
  */
 let isPrimary = function (color) {
     // perhaps not complicated enough to warrant a method, but does enacapsulate the logic.
     // Maybe green will become a primary color some day?
-    return primaryColors.includes(color);
+    return PRIMARY_COLORS.includes(color);
 };
 
 /**
@@ -30,87 +32,88 @@ let isPrimary = function (color) {
  */
 let makeBackendServiceHref = function (options, pageSize, pageToDisplay) {
     let backendUri = URI(window.path);
-    // Specify to get 11 items, in order to easily discern if there's a next page
-    // We'll remove the 11th item from the returned data, if that many are returned
+    // Specify to get an additional item, beyond the page size, in order to easily discern if there's a next page
+    // We'll remove this additional item from the returned data, if that many are returned
     backendUri
         .addSearch("limit", pageSize + 1)
         .addSearch("offset", (pageToDisplay - 1) * pageSize);
     if (options && options.colors) {
         options.colors
-            .map(singleColor => backendUri
-                .addSearch("color[]", singleColor));
+            .map(singleColor => backendUri.addSearch("color[]", singleColor));
     }
     return backendUri.href();
 };
 
 /**
  *
- * @param options, with 'page' and 'colors' fields
+ * @param options, with possible 'page' and 'colors' values
  * @returns a promise with the results
  */
 let retrieve = function (options) {
 
     let pageToDisplay = options && options.page ? options.page : 1;
-    let backendServiceHref = makeBackendServiceHref(options, pageSize, pageToDisplay);
+    let backendServiceHref = makeBackendServiceHref(options, PAGE_SIZE, pageToDisplay);
 
 
     // Call the backend service to get the data
     let errorInformation = "";
     return fetch(backendServiceHref)
         .then(response => {
-            if (isDebug) console.log(JSON.stringify(response));
+            if (IS_DEBUG) {
+                console.log(JSON.stringify(response));
+            }
+
             // If the backend service failed, log some pertinent information
-            if (response && response.status !== 200) {
+            // If the API returns response codes, in additional to 200, that are 'OK', adjust this next assignment.
+            let isBadResponse = response && response.status !== 200;
+            if (isBadResponse) {
                 errorInformation = "Unexpected response.status=" + response.status + "; href=" + backendServiceHref + "; ";
             }
             return response.json();
         })
         .then(returnJson => {
 
+            // Define the object we'll return
             let returnObject = {};
 
-            // Determine the previous and next page
+
+            // Next and Previous Page
+            // We requested one extra item beyond the PAGE_SIZE; if that extra item was returned, then
+            //    set an appropriate nextPage value and remove the extra item gotten from the request
+            let nextPageValue;
             let numReturnObjects = returnJson.length;
-            returnObject.previousPage = pageToDisplay === 1 ? null : pageToDisplay - 1;
-            returnObject.nextPage = numReturnObjects === pageSize + 1 ? pageToDisplay + 1 : null;
-
-
-            // remove 11th item, if there is one
-            if (numReturnObjects === pageSize + 1) {
+            if (numReturnObjects > PAGE_SIZE) {
+                nextPageValue = pageToDisplay + 1;
                 returnJson.pop();
+            } else {
+                nextPageValue = null;
             }
+            returnObject.nextPage = nextPageValue;
+
+            returnObject.previousPage = pageToDisplay === 1 ? null : pageToDisplay - 1;
 
 
-            // Add ID's
-            returnObject.ids =
-                returnJson
-                    .map((item) => {
-                        return item.id
-                    });
+            //  ID's
+            returnObject.ids = returnJson.map(item => item.id);
 
 
-            // Add Open primary objects to an array
+            // Open primary objects (with an additional property indicating color primacy)
             returnObject.open =
                 returnJson
-                    .filter(item => {
-                        return item.disposition === "open"
-                    })
+                    .filter(item => item.disposition === OPEN_VALUE)
                     .map(item => {
                         item.isPrimary = isPrimary(item.color);
                         return item;
                     });
 
 
-            // Add closedPrimaryCount
+            // closedPrimaryCount
             returnObject.closedPrimaryCount =
                 returnJson
-                    .filter(item => {
-                        return item.disposition === "closed"
-                    })
-                    .filter(item => {
-                        return isPrimary(item.color)
-                    })
-                    .length;
+                    .filter(item => item.disposition === CLOSED_VALUE)
+                    .filter(item => isPrimary(item.color))
+                    .length;  // alas, could not justify using .reduce() here to round out the functional trifecta...
+
 
             return returnObject;
         })
@@ -119,7 +122,6 @@ let retrieve = function (options) {
         );
 
 };
-
 
 
 export default retrieve;
